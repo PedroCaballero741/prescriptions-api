@@ -76,3 +76,16 @@ model PrescriptionItem {
 
   @@index([prescriptionId])
 }
+
+model Settings {
+  id                      String   @id @default("singleton")
+  platformName            String   @default("RxFlow")
+  supportEmail            String   @default("support@rxflow.health")
+  prescriptionCodePrefix  String   @default("RX")
+  maxItemsPerPrescription Int      @default(20)
+  notifNewPrescription    Boolean  @default(true)
+  notifConsumed           Boolean  @default(true)
+  notifDailyDigest        Boolean  @default(false)
+  notifWeeklyReport       Boolean  @default(true)
+  updatedAt               DateTime @updatedAt
+}
