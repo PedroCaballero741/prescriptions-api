@@ -535,314 +535,552 @@ export class PrescriptionsService {
     const appOrigin = process.env.APP_ORIGIN ?? 'http://localhost:3000';
     const qrUrl = `${appOrigin}/rx/${prescription.code}`;
     const qrBuffer = await QRCode.toBuffer(qrUrl, {
-      width: 96,
+      width: 90,
       margin: 1,
-      color: { dark: '#111827', light: '#ffffff' },
+      color: { dark: '#000000', light: '#ffffff' },
     });
 
     return new Promise((resolve, reject) => {
-      // A4 page, 48pt margins
-      const doc = new PDFDocument({ size: 'A4', margin: 48 });
+      const doc = new PDFDocument({ size: 'A4', margin: 0, autoFirstPage: true });
       const chunks: Buffer[] = [];
       doc.on('data', (chunk: Buffer) => chunks.push(chunk));
       doc.on('end', () => resolve(Buffer.concat(chunks)));
       doc.on('error', reject);
 
-      const ML = 48;          // margin left
-      const MR = 48;          // margin right
-      const PW = 595.28;      // A4 width
-      const CW = PW - ML - MR; // content width ≈ 499
-      const QR_SIZE = 90;
-      const QR_X = PW - MR - QR_SIZE;
+      // ── Layout constants ─────────────────────────────────────────────────
+      const L = 15;        // left edge
+      const T = 15;        // top edge
+      const W = 565;       // content width  (595.28 − 30)
+      const PAGE_H = 841;  // A4 height
 
-      // ── HEADER ──────────────────────────────────────────────────────────────
-      const headerY = doc.y;
+      // Row heights
+      const H_FORM = 18;
+      const H_PAT_H = 14;   // patient section headers
+      const H_PAT_D = 18;   // patient section data
+      const H_MED_H = 13;   // medication column header
+      const H_DET_H = 13;   // detail row header (DOSIS, VIA…)
+      const H_DET_D = 14;   // detail row data
+      const H_SPAN = 14;    // posology / recommendations rows
+      const H_FOOTER = 20;
+      const H_ORDER = 26;
 
-      // QR — absolute top-right
-      doc.image(qrBuffer, QR_X, headerY, { width: QR_SIZE, height: QR_SIZE });
+      // Column layouts
+      const FW = W - 78;    // formula section width (QR takes 78pt)
+      const F1 = [55, 100, 125, FW - 280] as const;  // row-1 formula cols
+      const P1 = [40, 315, 120, 90] as const;         // patient row 1
+      const P2 = [65, 100, 55, 45, 70, 230] as const; // patient row 2
+      // Medication header cols: NUM | MED NAME | CONCENTRACIÓN | FORMA FARMACÉUTICA
+      const MA = [22, 198, 168, W - 22 - 198 - 168] as const;
+      // Detail cols (full W, no num offset): DOSIS|VIA|FREC|TIEMPO|CANTIDAD|LETRAS
+      const MB = [55, 75, 55, 70, 65, W - 320] as const;
 
-      // Title block — left side, constrained width to not overlap QR
-      const textW = CW - QR_SIZE - 16;
+      let y = T;
+      let x: number;
+
+      // ── TITLE ─────────────────────────────────────────────────────────────
       doc
         .font('Helvetica-Bold')
-        .fontSize(20)
-        .fillColor('#111827')
-        .text('PRESCRIPCIÓN MÉDICA', ML, headerY, { width: textW });
-
-      doc
-        .font('Helvetica')
-        .fontSize(9)
-        .fillColor('#6b7280')
-        .text('RxFlow Medical Platform', ML, doc.y, { width: textW });
-
-      doc.moveDown(0.5);
-
-      // Code / Date / Status chips
-      const date = prescription.createdAt.toLocaleDateString('es-MX', {
-        day: '2-digit',
-        month: 'long',
-        year: 'numeric',
-      });
-      const statusLabel =
-        prescription.status === PrescriptionStatus.consumed
-          ? 'CONSUMIDA'
-          : 'PENDIENTE';
-
-      doc
-        .font('Helvetica-Bold')
-        .fontSize(10)
-        .fillColor('#111827')
-        .text(`Código: `, ML, doc.y, { continued: true, width: textW })
-        .font('Helvetica')
-        .text(prescription.code, { continued: true })
-        .font('Helvetica-Bold')
-        .text('   Fecha: ', { continued: true })
-        .font('Helvetica')
-        .text(date, { continued: true })
-        .font('Helvetica-Bold')
-        .text('   Estado: ', { continued: true })
-        .font('Helvetica')
-        .fillColor(
-          prescription.status === PrescriptionStatus.consumed
-            ? '#059669'
-            : '#d97706',
-        )
-        .text(statusLabel);
-
-      // Ensure we're past the QR before drawing the divider
-      const afterHeader = Math.max(doc.y, headerY + QR_SIZE) + 12;
-      this.drawDivider(doc, ML, afterHeader, PW - MR);
-
-      // ── PATIENT ─────────────────────────────────────────────────────────────
-      doc.y = afterHeader + 14;
-      this.writeSectionLabel(doc, 'PACIENTE', ML);
-      doc.moveDown(0.4);
-
-      const patient = prescription.patient;
-      this.writeRow(doc, 'Nombre', patient.user.name, ML, CW);
-      this.writeRow(doc, 'Email', patient.user.email, ML, CW);
-      this.writeRow(
-        doc,
-        'Fecha de nacimiento',
-        patient.birthDate
-          ? patient.birthDate.toLocaleDateString('es-MX', {
-              day: '2-digit',
-              month: 'long',
-              year: 'numeric',
-            })
-          : 'No registrada',
-        ML,
-        CW,
-      );
-
-      doc.moveDown(0.6);
-      this.drawDivider(doc, ML, doc.y, PW - MR);
-
-      // ── MEDICATIONS ─────────────────────────────────────────────────────────
-      doc.moveDown(0.6);
-      this.writeSectionLabel(doc, 'MEDICAMENTOS', ML);
-      doc.moveDown(0.4);
-
-      if (prescription.items.length === 0) {
-        doc.font('Helvetica').fontSize(10).fillColor('#6b7280').text('Sin items registrados.', ML);
-      } else {
-        prescription.items.forEach((item, i) => {
-          const itemY = doc.y;
-          // Item number circle background
-          doc
-            .roundedRect(ML, itemY, CW, 1, 0)
-            .fillColor('#f9fafb');
-
-          doc
-            .font('Helvetica-Bold')
-            .fontSize(11)
-            .fillColor('#111827')
-            .text(`${i + 1}. ${item.name}`, ML, itemY, { width: CW });
-
-          doc.font('Helvetica').fontSize(9.5).fillColor('#374151');
-
-          const parts: string[] = [];
-          if (item.dosage) parts.push(`Dosis: ${item.dosage}`);
-          if (item.quantity) parts.push(`Cantidad: ${item.quantity}`);
-          if (parts.length) doc.text(parts.join('   ·   '), ML, doc.y, { width: CW });
-
-          if (item.instructions) {
-            doc
-              .fillColor('#6b7280')
-              .text(`Indicaciones: ${item.instructions}`, ML, doc.y, { width: CW });
-          }
-
-          if (i < prescription.items.length - 1) doc.moveDown(0.5);
+        .fontSize(11)
+        .fillColor('#000000')
+        .text('FORMULACIÓN MEDICAMENTOS (PORTAL SIS)', L, y + 5, {
+          width: W,
+          align: 'center',
+          lineBreak: false,
         });
-      }
 
-      // Notes
-      if (prescription.notes) {
-        doc.moveDown(0.6);
-        this.drawDivider(doc, ML, doc.y, PW - MR);
-        doc.moveDown(0.6);
-        this.writeSectionLabel(doc, 'NOTAS', ML);
-        doc.moveDown(0.3);
-        doc
-          .font('Helvetica-Oblique')
-          .fontSize(10)
-          .fillColor('#374151')
-          .text(prescription.notes, ML, doc.y, { width: CW });
-      }
-
-      // ── DOCTOR FOOTER ────────────────────────────────────────────────────────
-      doc.moveDown(1);
-      this.drawDivider(doc, ML, doc.y, PW - MR);
-      doc.moveDown(0.7);
-
-      const footerY = doc.y;
-      const author = prescription.author;
-
-      // License image — right side
-      const LICENSE_W = 80;
-      const LICENSE_H = 100;
-      const licenseX = PW - MR - LICENSE_W;
-      let licenseDrawn = false;
-
-      if (author.licenseImage) {
-        const licensePath = join(
-          process.cwd(),
-          'uploads',
-          'doctors',
-          author.id,
-          author.licenseImage,
-        );
-        if (existsSync(licensePath)) {
-          try {
-            doc.image(licensePath, licenseX, footerY, {
-              width: LICENSE_W,
-              height: LICENSE_H,
-              cover: [LICENSE_W, LICENSE_H],
-            });
-            doc
-              .font('Helvetica')
-              .fontSize(7)
-              .fillColor('#9ca3af')
-              .text('Cédula Profesional', licenseX, footerY + LICENSE_H + 2, {
-                width: LICENSE_W,
-                align: 'center',
-              });
-            licenseDrawn = true;
-          } catch {
-            // skip if image unreadable
-          }
-        }
-      }
-
-      // Doctor text — left side, constrained width
-      const doctorTextW = licenseDrawn ? CW - LICENSE_W - 16 : CW;
-
-      doc
-        .font('Helvetica-Bold')
-        .fontSize(12)
-        .fillColor('#111827')
-        .text(`Dr. ${author.user.name}`, ML, footerY, { width: doctorTextW });
-
-      if (author.specialty) {
-        doc
-          .font('Helvetica')
-          .fontSize(10)
-          .fillColor('#6b7280')
-          .text(author.specialty, ML, doc.y, { width: doctorTextW });
-      }
-
-      doc.moveDown(0.8);
-
-      // Signature
-      const sigY = doc.y;
-      const SIG_W = 160;
-      const SIG_H = 56;
-
-      if (author.signatureImage) {
-        const sigPath = join(
-          process.cwd(),
-          'uploads',
-          'doctors',
-          author.id,
-          author.signatureImage,
-        );
-        if (existsSync(sigPath)) {
-          try {
-            doc.image(sigPath, ML, sigY, { width: SIG_W, height: SIG_H, fit: [SIG_W, SIG_H] });
-            doc.y = sigY + SIG_H + 4;
-          } catch {
-            this.drawSignatureLine(doc, ML, sigY, SIG_W);
-          }
-        } else {
-          this.drawSignatureLine(doc, ML, sigY, SIG_W);
-        }
-      } else if (author.signatureText) {
-        doc
-          .font('Helvetica-Oblique')
-          .fontSize(18)
-          .fillColor('#374151')
-          .text(author.signatureText, ML, sigY, { width: SIG_W });
-        doc.y = doc.y + 4;
-        this.drawSignatureLine(doc, ML, doc.y, SIG_W);
-      } else {
-        this.drawSignatureLine(doc, ML, sigY, SIG_W);
-        doc.y = sigY + SIG_H;
-      }
-
-      doc
-        .font('Helvetica')
-        .fontSize(8)
-        .fillColor('#9ca3af')
-        .text('Firma del Médico', ML, doc.y + 2, { width: SIG_W, align: 'left' });
-
-      // QR label below QR
       doc
         .font('Helvetica')
         .fontSize(7)
-        .fillColor('#9ca3af')
-        .text('Escanea para verificar', QR_X, headerY + QR_SIZE + 2, {
-          width: QR_SIZE,
-          align: 'center',
+        .fillColor('#000000')
+        .text('Página 1 de 1', L, y + 5, { width: W, align: 'right', lineBreak: false });
+
+      y += 18;
+
+      const genDate = new Date().toLocaleString('es-CO', {
+        day: '2-digit',
+        month: '2-digit',
+        year: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+        hour12: false,
+      });
+      doc
+        .font('Helvetica')
+        .fontSize(7)
+        .text(`Fecha generación: ${genDate}`, L, y, {
+          width: W,
+          align: 'right',
+          lineBreak: false,
         });
+
+      y += 10;
+
+      // ── FORMULA TABLE ─────────────────────────────────────────────────────
+      const formY = y;
+      const qrH = H_FORM * 2;   // QR cell spans both formula rows
+      const QR_SIZE = qrH - 4;
+
+      // Row 1: FÓRMULA | code | FECHA DE PRESCRIPCIÓN | date
+      x = L;
+      this.pdfCell(doc, x, y, F1[0], H_FORM, 'FÓRMULA');
+      x += F1[0];
+      this.pdfCell(doc, x, y, F1[1], H_FORM, prescription.code, { bold: true, size: 8 });
+      x += F1[1];
+      this.pdfCell(doc, x, y, F1[2], H_FORM, 'FECHA DE PRESCRIPCIÓN');
+      x += F1[2];
+      const prescDateStr = prescription.createdAt.toLocaleString('es-CO', {
+        day: '2-digit', month: '2-digit', year: 'numeric',
+        hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false,
+      });
+      this.pdfCell(doc, x, y, F1[3], H_FORM, prescDateStr, { size: 7 });
+
+      // QR cell — spans both formula rows
+      const qrCellX = L + FW;
+      doc.lineWidth(0.4).rect(qrCellX, formY, 78, qrH).stroke('#000000');
+      doc.image(qrBuffer, qrCellX + (78 - QR_SIZE) / 2, formY + 2, {
+        width: QR_SIZE,
+        height: QR_SIZE,
+      });
+
+      y += H_FORM;
+
+      // Row 2: ESM | institution
+      x = L;
+      this.pdfCell(doc, x, y, 120, H_FORM, 'ESM QUE GENERA LA FÓRMULA');
+      x += 120;
+      this.pdfCell(doc, x, y, FW - 120, H_FORM, 'RxFlow Medical Platform', { bold: true, size: 8 });
+
+      y += H_FORM + 5;
+
+      // ── PATIENT TABLE ─────────────────────────────────────────────────────
+      // Header row 1
+      x = L;
+      (['GRADO', 'APELLIDOS Y NOMBRES DEL PACIENTE', 'EDAD', 'CAUSA EXTERNA'] as const).forEach(
+        (h, i) => {
+          this.pdfCell(doc, x, y, P1[i], H_PAT_H, h, { bold: true });
+          x += P1[i];
+        },
+      );
+      y += H_PAT_H;
+
+      // Data row 1
+      const age = prescription.patient.birthDate
+        ? this.calculateAge(prescription.patient.birthDate)
+        : 'No registra';
+      x = L;
+      this.pdfCell(doc, x, y, P1[0], H_PAT_D, '');
+      x += P1[0];
+      this.pdfCell(doc, x, y, P1[1], H_PAT_D, prescription.patient.user.name.toUpperCase(), {
+        bold: true,
+        size: 8,
+      });
+      x += P1[1];
+      this.pdfCell(doc, x, y, P1[2], H_PAT_D, age, { size: 7 });
+      x += P1[2];
+      this.pdfCell(doc, x, y, P1[3], H_PAT_D, '');
+      y += H_PAT_D;
+
+      // Header row 2
+      x = L;
+      (
+        ['AFILIACIÓN', 'CENTRO DE COSTOS', 'FUERZA', 'ARL', 'EPS', 'LUGAR PRESCRIPCIÓN'] as const
+      ).forEach((h, i) => {
+        this.pdfCell(doc, x, y, P2[i], H_PAT_H, h, { bold: true });
+        x += P2[i];
+      });
+      y += H_PAT_H;
+
+      // Data row 2
+      x = L;
+      (
+        [
+          'Beneficiario',
+          prescription.patient.user.email,
+          '',
+          'No registra',
+          'No registra',
+          '',
+        ] as const
+      ).forEach((d, i) => {
+        this.pdfCell(doc, x, y, P2[i], H_PAT_D, d, { size: 7 });
+        x += P2[i];
+      });
+      y += H_PAT_D + 4;
+
+      // ── MEDICATIONS ───────────────────────────────────────────────────────
+      prescription.items.forEach((item, idx) => {
+        // Estimate space needed; add page if required
+        const estH = H_MED_H + 22 + H_DET_H + H_DET_D + H_SPAN + H_SPAN + 4;
+        if (y + estH > PAGE_H - 80) {
+          doc.addPage({ size: 'A4', margin: 0 });
+          y = T;
+        }
+
+        const medStartY = y;
+
+        // ── Med header row (skip NUM col — drawn separately spanning 2 rows)
+        x = L + MA[0];
+        this.pdfCell(doc, x, y, MA[1], H_MED_H, 'MEDICAMENTO EN NOMBRE GENÉRICO', { bold: true });
+        x += MA[1];
+        this.pdfCell(doc, x, y, MA[2], H_MED_H, 'CONCENTRACIÓN', { bold: true });
+        x += MA[2];
+        this.pdfCell(doc, x, y, MA[3], H_MED_H, 'FORMA FARMACÉUTICA', { bold: true });
+        y += H_MED_H;
+
+        // ── Med name row (skip NUM col)
+        x = L + MA[0];
+        const nameH = this.pdfCellWrap(doc, x, y, MA[1], 18, item.name.toUpperCase(), {
+          bold: true,
+          size: 8,
+        });
+        x += MA[1];
+        this.pdfCellWrap(doc, x, y, MA[2], nameH, item.dosage ?? '', { size: 7.5 });
+        x += MA[2];
+        this.pdfCellWrap(doc, x, y, MA[3], nameH, '', { size: 7.5 });
+
+        // ── NUM cell spanning header + name rows
+        const numSpanH = H_MED_H + nameH;
+        doc.lineWidth(0.4).rect(L, medStartY, MA[0], numSpanH).stroke('#000000');
+        doc
+          .font('Helvetica-Bold')
+          .fontSize(10)
+          .fillColor('#000000')
+          .text(`${idx + 1}`, L + 2, medStartY + (numSpanH - 10) / 2, {
+            width: MA[0] - 4,
+            align: 'center',
+            lineBreak: false,
+          });
+
+        y += nameH;
+
+        // ── Detail header row (full width)
+        x = L;
+        (
+          ['DOSIS', 'VIA ADM.', 'FREC.', 'TIEMPO TTO.', 'CANTIDAD', 'CANTIDAD EN LETRAS'] as const
+        ).forEach((h, i) => {
+          this.pdfCell(doc, x, y, MB[i], H_DET_H, h, { bold: true });
+          x += MB[i];
+        });
+        y += H_DET_H;
+
+        // ── Detail data row (full width)
+        const qtyWords = item.quantity ? this.numberToWords(item.quantity) : '';
+        x = L;
+        (
+          [
+            item.dosage ?? '',
+            'ORAL',
+            '',
+            '',
+            item.quantity?.toString() ?? '',
+            qtyWords,
+          ] as const
+        ).forEach((d, i) => {
+          this.pdfCell(doc, x, y, MB[i], H_DET_D, d, { size: 8 });
+          x += MB[i];
+        });
+        y += H_DET_D;
+
+        // ── Posology (full width)
+        const posText = item.instructions
+          ? `POSOLOGÍA: ${item.instructions}`
+          : 'POSOLOGÍA:';
+        doc.lineWidth(0.4).rect(L, y, W, H_SPAN).stroke('#000000');
+        doc
+          .font('Helvetica')
+          .fontSize(7)
+          .fillColor('#000000')
+          .text(posText, L + 3, y + 3, { width: W - 6, lineBreak: false, ellipsis: true });
+        y += H_SPAN;
+
+        // ── Recommendations (full width)
+        doc.lineWidth(0.4).rect(L, y, W, H_SPAN).stroke('#000000');
+        doc
+          .font('Helvetica')
+          .fontSize(7)
+          .fillColor('#000000')
+          .text('Recomendaciones:', L + 3, y + 3, { width: W - 6, lineBreak: false });
+        y += H_SPAN;
+      });
+
+      // ── NOTES (prescription-level) ────────────────────────────────────────
+      if (prescription.notes) {
+        if (y + H_SPAN > PAGE_H - 80) {
+          doc.addPage({ size: 'A4', margin: 0 });
+          y = T;
+        }
+        doc.lineWidth(0.4).rect(L, y, W, H_SPAN).stroke('#000000');
+        doc
+          .font('Helvetica')
+          .fontSize(7)
+          .fillColor('#000000')
+          .text(`Notas: ${prescription.notes}`, L + 3, y + 3, {
+            width: W - 6,
+            lineBreak: false,
+            ellipsis: true,
+          });
+        y += H_SPAN;
+      }
+
+      y += 8;
+
+      // ── DOCTOR FOOTER TABLE ───────────────────────────────────────────────
+      if (y + H_FOOTER + H_ORDER + 60 > PAGE_H) {
+        doc.addPage({ size: 'A4', margin: 0 });
+        y = T;
+      }
+
+      const DOC_LABEL_W = 80;
+      this.pdfCell(doc, L, y, DOC_LABEL_W, H_FOOTER, 'Médico:', { bold: false });
+      this.pdfCell(doc, L + DOC_LABEL_W, y, W - DOC_LABEL_W, H_FOOTER,
+        `${prescription.author.user.name.toUpperCase()}`, { bold: true, size: 8.5 });
+      y += H_FOOTER;
+
+      // ── Specialty row ─────────────────────────────────────────────────────
+      if (prescription.author.specialty) {
+        this.pdfCell(doc, L, y, DOC_LABEL_W, H_FORM, 'Especialidad:');
+        this.pdfCell(doc, L + DOC_LABEL_W, y, W - DOC_LABEL_W, H_FORM,
+          prescription.author.specialty, { size: 8 });
+        y += H_FORM;
+      }
+
+      // ── ORDER TEXT ────────────────────────────────────────────────────────
+      doc.lineWidth(0.4).rect(L, y, W, H_ORDER).stroke('#000000');
+      doc
+        .font('Helvetica')
+        .fontSize(6.5)
+        .fillColor('#000000')
+        .text(
+          'ORDEN VÁLIDA POR 3 DÍAS (72 HORAS) HÁBILES. PACIENTE PRESENTAR DOCUMENTO DE IDENTIDAD EN FARMACIA. VERIFICAR MEDICAMENTOS DESPACHADOS ANTES DE RETIRARSE.',
+          L + 3,
+          y + 5,
+          { width: W - 6, align: 'center', lineBreak: true },
+        );
+      y += H_ORDER + 10;
+
+      // ── SIGNATURE + LICENSE + QR ──────────────────────────────────────────
+      const SIG_W = 180;
+      const SIG_H = 55;
+      const LIC_W = 80;
+      const LIC_H = 100;
+      const QR_BOT_SIZE = 70;
+      const QR_BOT_X = L + W - QR_BOT_SIZE;
+
+      // Signature block
+      if (prescription.author.signatureImage) {
+        const sigPath = join(
+          process.cwd(), 'uploads', 'doctors',
+          prescription.author.id, prescription.author.signatureImage,
+        );
+        if (existsSync(sigPath)) {
+          try {
+            doc.image(sigPath, L, y, { width: SIG_W, height: SIG_H, fit: [SIG_W, SIG_H] });
+          } catch { /* skip unreadable */ }
+        }
+      } else if (prescription.author.signatureText) {
+        doc
+          .font('Helvetica-Oblique')
+          .fontSize(20)
+          .fillColor('#000000')
+          .text(prescription.author.signatureText, L, y + 8, {
+            width: SIG_W,
+            lineBreak: false,
+          });
+      }
+
+      doc
+        .moveTo(L, y + SIG_H)
+        .lineTo(L + SIG_W, y + SIG_H)
+        .lineWidth(0.5)
+        .stroke('#000000');
+
+      doc
+        .font('Helvetica')
+        .fontSize(7)
+        .fillColor('#555555')
+        .text('Firma del Médico', L, y + SIG_H + 3, {
+          width: SIG_W,
+          align: 'center',
+          lineBreak: false,
+        });
+
+      // License image (right of signature)
+      if (prescription.author.licenseImage) {
+        const licPath = join(
+          process.cwd(), 'uploads', 'doctors',
+          prescription.author.id, prescription.author.licenseImage,
+        );
+        if (existsSync(licPath)) {
+          try {
+            const licX = L + SIG_W + 20;
+            doc.image(licPath, licX, y, {
+              width: LIC_W,
+              height: LIC_H,
+              cover: [LIC_W, LIC_H],
+            });
+            doc
+              .font('Helvetica')
+              .fontSize(6.5)
+              .fillColor('#888888')
+              .text('Cédula Profesional', licX, y + LIC_H + 2, {
+                width: LIC_W,
+                align: 'center',
+                lineBreak: false,
+              });
+          } catch { /* skip */ }
+        }
+      }
+
+      // QR bottom-right
+      doc.image(qrBuffer, QR_BOT_X, y, { width: QR_BOT_SIZE, height: QR_BOT_SIZE });
+      doc
+        .font('Helvetica')
+        .fontSize(6.5)
+        .fillColor('#888888')
+        .text('Escanea para verificar', QR_BOT_X, y + QR_BOT_SIZE + 2, {
+          width: QR_BOT_SIZE,
+          align: 'center',
+          lineBreak: false,
+        });
+
+      y += Math.max(SIG_H + 18, LIC_H + 12) + 10;
+
+      // ── FINAL NOTE ────────────────────────────────────────────────────────
+      doc
+        .font('Helvetica-Bold')
+        .fontSize(9)
+        .fillColor('#000000')
+        .text(
+          'Nota: Este documento no es válido para trámites.',
+          L,
+          y,
+          { width: W, align: 'center', lineBreak: false },
+        );
 
       doc.end();
     });
   }
 
-  private drawDivider(doc: PDFKit.PDFDocument, x1: number, y: number, x2: number) {
-    doc.moveTo(x1, y).lineTo(x2, y).strokeColor('#e5e7eb').lineWidth(0.5).stroke();
-    doc.lineWidth(1).strokeColor('#000000'); // reset
-  }
+  // ── PDF layout helpers ────────────────────────────────────────────────────
 
-  private drawSignatureLine(doc: PDFKit.PDFDocument, x: number, y: number, width: number) {
-    doc.moveTo(x, y + 40).lineTo(x + width, y + 40).strokeColor('#9ca3af').lineWidth(0.8).stroke();
-    doc.lineWidth(1).strokeColor('#000000');
-  }
-
-  private writeSectionLabel(doc: PDFKit.PDFDocument, label: string, x: number) {
-    doc
-      .font('Helvetica-Bold')
-      .fontSize(8.5)
-      .fillColor('#6b7280')
-      .text(label, x, doc.y, { characterSpacing: 1.2 });
-    doc.fillColor('#111827');
-  }
-
-  private writeRow(
+  /** Draw a bordered cell and optionally write text inside it. */
+  private pdfCell(
     doc: PDFKit.PDFDocument,
-    label: string,
-    value: string,
     x: number,
-    width: number,
+    y: number,
+    w: number,
+    h: number,
+    text: string,
+    opts: {
+      size?: number;
+      bold?: boolean;
+      align?: 'left' | 'center' | 'right';
+      pad?: number;
+      wrap?: boolean;
+      valign?: 'top' | 'middle';
+    } = {},
   ) {
+    const {
+      size = 7.5,
+      bold = false,
+      align = 'left',
+      pad = 3,
+      wrap = false,
+      valign = 'top',
+    } = opts;
+
+    doc.lineWidth(0.4).rect(x, y, w, h).stroke('#000000');
+
+    if (!text) return;
+
+    const textY =
+      valign === 'middle'
+        ? y + Math.max(pad, (h - size * 1.2) / 2)
+        : y + pad;
+
     doc
-      .font('Helvetica-Bold')
-      .fontSize(10)
-      .fillColor('#374151')
-      .text(`${label}: `, x, doc.y, { continued: true, width })
-      .font('Helvetica')
-      .fillColor('#111827')
-      .text(value);
+      .font(bold ? 'Helvetica-Bold' : 'Helvetica')
+      .fontSize(size)
+      .fillColor('#000000')
+      .text(text, x + pad, textY, {
+        width: w - pad * 2,
+        align,
+        lineBreak: wrap,
+        ellipsis: !wrap,
+      });
+  }
+
+  /** Draw a cell that wraps text and returns the actual rendered height (min h). */
+  private pdfCellWrap(
+    doc: PDFKit.PDFDocument,
+    x: number,
+    y: number,
+    w: number,
+    minH: number,
+    text: string,
+    opts: { size?: number; bold?: boolean; pad?: number } = {},
+  ): number {
+    const { size = 7.5, bold = false, pad = 3 } = opts;
+
+    // Measure text height
+    const measured = doc
+      .font(bold ? 'Helvetica-Bold' : 'Helvetica')
+      .fontSize(size)
+      .heightOfString(text, { width: w - pad * 2 });
+
+    const h = Math.max(minH, measured + pad * 2);
+
+    doc.lineWidth(0.4).rect(x, y, w, h).stroke('#000000');
+
+    doc
+      .font(bold ? 'Helvetica-Bold' : 'Helvetica')
+      .fontSize(size)
+      .fillColor('#000000')
+      .text(text, x + pad, y + pad, { width: w - pad * 2, lineBreak: true });
+
+    return h;
+  }
+
+  private calculateAge(birthDate: Date): string {
+    const now = new Date();
+    let years = now.getFullYear() - birthDate.getFullYear();
+    let months = now.getMonth() - birthDate.getMonth();
+    let days = now.getDate() - birthDate.getDate();
+    if (days < 0) months--;
+    if (months < 0) {
+      years--;
+      months += 12;
+    }
+    return `${years} Años / ${Math.abs(months)} Meses / ${Math.abs(days)} Días`;
+  }
+
+  private numberToWords(n: number): string {
+    if (!n || n <= 0) return '';
+    if (n > 999) return n.toString();
+    const ones = [
+      '', 'UNO', 'DOS', 'TRES', 'CUATRO', 'CINCO', 'SEIS', 'SIETE', 'OCHO',
+      'NUEVE', 'DIEZ', 'ONCE', 'DOCE', 'TRECE', 'CATORCE', 'QUINCE',
+      'DIECISÉIS', 'DIECISIETE', 'DIECIOCHO', 'DIECINUEVE',
+    ];
+    const tens = [
+      '', '', 'VEINTE', 'TREINTA', 'CUARENTA', 'CINCUENTA',
+      'SESENTA', 'SETENTA', 'OCHENTA', 'NOVENTA',
+    ];
+    const hundreds = [
+      '', 'CIEN', 'DOSCIENTOS', 'TRESCIENTOS', 'CUATROCIENTOS', 'QUINIENTOS',
+      'SEISCIENTOS', 'SETECIENTOS', 'OCHOCIENTOS', 'NOVECIENTOS',
+    ];
+    if (n < 20) return ones[n];
+    if (n === 21) return 'VEINTIUNO';
+    if (n < 30) return 'VEINTI' + ones[n - 20];
+    if (n < 100)
+      return tens[Math.floor(n / 10)] + (n % 10 ? ' Y ' + ones[n % 10] : '');
+    if (n === 100) return 'CIEN';
+    return (
+      hundreds[Math.floor(n / 100)] +
+      (n % 100 ? ' ' + this.numberToWords(n % 100) : '')
+    );
   }
 
   private buildFileToken(code: string): string {
