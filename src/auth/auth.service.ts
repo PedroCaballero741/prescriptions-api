@@ -37,17 +37,18 @@ export class AuthService {
   ) {}
 
   async register(input: RegisterDto) {
-    const existingUser = await this.usersService.findByEmail(input.email);
+    const email = input.email.trim().toLowerCase();
+    const existingUser = await this.usersService.findByEmail(email);
     if (existingUser) {
       throw new ConflictException('Email already registered');
     }
 
     const passwordHash = await bcrypt.hash(input.password, 10);
-    const user = await this.usersService.create({
-      email: input.email,
+    const user = await this.usersService.createWithRoleProfile({
+      email,
       password: passwordHash,
-      name: input.name,
-      role: input.role ?? Role.patient,
+      name: input.name.trim(),
+      role: input.role === Role.doctor ? 'doctor' : 'patient',
     });
 
     return this.sanitizeUser(user);
@@ -125,7 +126,7 @@ export class AuthService {
   }
 
   private async validateCredentials(email: string, password: string) {
-    const user = await this.usersService.findByEmail(email);
+    const user = await this.usersService.findByEmail(email.trim().toLowerCase());
 
     if (!user) {
       throw new UnauthorizedException('Invalid credentials');

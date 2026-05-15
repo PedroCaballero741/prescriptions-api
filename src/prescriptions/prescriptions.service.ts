@@ -1,11 +1,13 @@
 import {
   BadRequestException,
+  ConflictException,
   ForbiddenException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
 import { Prisma, PrescriptionStatus, Role } from '@prisma/client';
 import PDFDocument from 'pdfkit';
+import { randomBytes } from 'crypto';
 import { JwtUser } from '../auth/interfaces/jwt-user.interface';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreatePrescriptionDto } from './dto/create-prescription.dto';
@@ -50,6 +52,14 @@ export class PrescriptionsService {
   constructor(private readonly prisma: PrismaService) {}
 
   async createForDoctor(doctorUserId: string, input: CreatePrescriptionDto) {
+    const hasId = Boolean(input.patientId?.trim());
+    const hasEmail = Boolean(input.patientEmail?.trim());
+    if (hasId === hasEmail) {
+      throw new BadRequestException(
+        'Provide exactly one of patientId or patientEmail',
+      );
+    }
+
     const doctor = await this.prisma.doctor.findUnique({
       where: { userId: doctorUserId },
       select: { id: true },
@@ -59,21 +69,15 @@ export class PrescriptionsService {
       throw new ForbiddenException('Doctor profile not found');
     }
 
-    const patient = await this.prisma.patient.findUnique({
-      where: { id: input.patientId },
-      select: { id: true },
-    });
-
-    if (!patient) {
-      throw new NotFoundException('Patient not found');
-    }
+    const patientId = await this.resolvePatientRef(input);
+    const code = await this.ensureUniquePrescriptionCode(input.code);
 
     return this.prisma.prescription.create({
       data: {
-        code: input.code,
+        code,
         notes: input.notes,
         authorId: doctor.id,
-        patientId: patient.id,
+        patientId,
         items: {
           create: input.items.map((item) => ({
             name: item.name,
@@ -286,7 +290,7 @@ export class PrescriptionsService {
   ) {
     const page = query.page ?? DEFAULT_PAGE;
     const pageSize = Math.min(
-      query.pageSize ?? DEFAULT_PAGE_SIZE,
+      query.limit ?? query.pageSize ?? DEFAULT_PAGE_SIZE,
       MAX_PAGE_SIZE,
     );
     const where = {
@@ -318,11 +322,60 @@ export class PrescriptionsService {
     };
   }
 
-  private buildWhere(query: {
-    status?: PrescriptionStatus;
-    from?: string;
-    to?: string;
-  }): Prisma.PrescriptionWhereInput {
+  private async resolvePatientRef(input: CreatePrescriptionDto): Promise<string> {
+    if (input.patientId?.trim()) {
+      const patient = await this.prisma.patient.findUnique({
+        where: { id: input.patientId.trim() },
+        select: { id: true },
+      });
+      if (!patient) {
+        throw new NotFoundException('Patient not found');
+      }
+      return patient.id;
+    }
+
+    const email = input.patientEmail!.trim().toLowerCase();
+    const patient = await this.prisma.patient.findFirst({
+      where: { user: { email } },
+      select: { id: true },
+    });
+    if (!patient) {
+      throw new NotFoundException('Patient not found for this email');
+    }
+    return patient.id;
+  }
+
+  private async ensureUniquePrescriptionCode(desired?: string): Promise<string> {
+    if (desired?.trim()) {
+      const code = desired.trim();
+      const exists = await this.prisma.prescription.findUnique({
+        where: { code },
+        select: { id: true },
+      });
+      if (exists) {
+        throw new ConflictException('Prescription code already in use');
+      }
+      return code;
+    }
+
+    for (let attempt = 0; attempt < 16; attempt += 1) {
+      const code = `RX-${Date.now().toString(36).toUpperCase()}-${randomBytes(5).toString('hex').toUpperCase()}`;
+      const exists = await this.prisma.prescription.findUnique({
+        where: { code },
+        select: { id: true },
+      });
+      if (!exists) {
+        return code;
+      }
+      await new Promise<void>((resolve) => {
+        setImmediate(resolve);
+      });
+    }
+
+    throw new BadRequestException('Could not allocate a unique prescription code');
+  }
+
+  private buildWhere(query: PrescriptionQueryDto): Prisma.PrescriptionWhereInput {
     const hasFrom = Boolean(query.from);
     const hasTo = Boolean(query.to);
 
@@ -332,6 +385,8 @@ export class PrescriptionsService {
 
     return {
       status: query.status,
+      patientId: query.patientId,
+      authorId: query.doctorId,
       createdAt:
         hasFrom || hasTo
           ? {

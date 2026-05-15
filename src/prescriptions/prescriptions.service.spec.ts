@@ -17,6 +17,7 @@ const mockPrisma = {
   },
   patient: {
     findUnique: jest.fn(),
+    findFirst: jest.fn(),
     count: jest.fn(),
   },
   prescription: {
@@ -98,10 +99,23 @@ describe('PrescriptionsService', () => {
       ).rejects.toThrow(NotFoundException);
     });
 
+    it('throws NotFoundException when patient email not found', async () => {
+      mockPrisma.doctor.findUnique.mockResolvedValueOnce({ id: DOCTOR_ID });
+      mockPrisma.patient.findFirst.mockResolvedValueOnce(null);
+      await expect(
+        service.createForDoctor(USER_DOCTOR_ID, {
+          patientEmail: 'missing@test.com',
+          code: 'RX-001',
+          items: [{ name: 'Amox' }],
+        }),
+      ).rejects.toThrow(NotFoundException);
+    });
+
     it('creates prescription successfully', async () => {
       const rx = makePrescription();
       mockPrisma.doctor.findUnique.mockResolvedValueOnce({ id: DOCTOR_ID });
       mockPrisma.patient.findUnique.mockResolvedValueOnce({ id: PATIENT_ID });
+      mockPrisma.prescription.findUnique.mockResolvedValueOnce(null);
       mockPrisma.prescription.create.mockResolvedValueOnce(rx);
 
       const result = await service.createForDoctor(USER_DOCTOR_ID, {
@@ -127,6 +141,23 @@ describe('PrescriptionsService', () => {
           }),
         }),
       );
+    });
+
+    it('creates prescription using patient email and generated code', async () => {
+      const rx = makePrescription({ code: 'RX-GEN' });
+      mockPrisma.doctor.findUnique.mockResolvedValueOnce({ id: DOCTOR_ID });
+      mockPrisma.patient.findFirst.mockResolvedValueOnce({ id: PATIENT_ID });
+      mockPrisma.prescription.findUnique.mockResolvedValue(null);
+      mockPrisma.prescription.create.mockResolvedValueOnce(rx);
+
+      const result = await service.createForDoctor(USER_DOCTOR_ID, {
+        patientEmail: 'p@test.com',
+        items: [{ name: 'Amox' }],
+      });
+
+      expect(result).toEqual(rx);
+      expect(mockPrisma.patient.findFirst).toHaveBeenCalled();
+      expect(mockPrisma.prescription.create).toHaveBeenCalled();
     });
   });
 

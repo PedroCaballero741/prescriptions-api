@@ -1,13 +1,14 @@
 import { Role } from '@prisma/client';
 import {
+  IsDateString,
   IsEmail,
-  IsIn,
+  IsEnum,
   IsOptional,
   IsString,
   MinLength,
 } from 'class-validator';
 
-export class RegisterDto {
+export class CreateUserDto {
   @IsEmail()
   email: string;
 
@@ -19,7 +20,15 @@ export class RegisterDto {
   @MinLength(2)
   name: string;
 
+  @IsEnum(Role)
+  role: Role;
+
   @IsOptional()
-  @IsIn([Role.patient, Role.doctor])
-  role?: Role;
+  @IsString()
+  @MinLength(1)
+  specialty?: string;
+
+  @IsOptional()
+  @IsDateString()
+  birthDate?: string;
 }

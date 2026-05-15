@@ -6,7 +6,10 @@ import {
   IsIn,
   IsInt,
   IsOptional,
+  IsString,
+  Max,
   Min,
+  MinLength,
 } from 'class-validator';
 
 const toBoolean = (value: unknown): boolean | undefined => {
@@ -54,7 +57,26 @@ export class PrescriptionQueryDto {
   @Type(() => Number)
   @IsInt()
   @Min(1)
+  @Max(100)
   pageSize?: number;
+
+  /** Alias for `pageSize` (API contract). */
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(100)
+  limit?: number;
+
+  @IsOptional()
+  @IsString()
+  @MinLength(1)
+  doctorId?: string;
+
+  @IsOptional()
+  @IsString()
+  @MinLength(1)
+  patientId?: string;
 
   @IsOptional()
   @IsIn(['asc', 'desc'])

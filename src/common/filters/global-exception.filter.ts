@@ -93,6 +93,8 @@ export class GlobalExceptionFilter implements ExceptionFilter {
         return 'FORBIDDEN';
       case HttpStatus.NOT_FOUND:
         return 'NOT_FOUND';
+      case HttpStatus.CONFLICT:
+        return 'CONFLICT';
       case HttpStatus.TOO_MANY_REQUESTS:
         return 'TOO_MANY_REQUESTS';
       default:

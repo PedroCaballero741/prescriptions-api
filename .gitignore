@@ -31,3 +31,6 @@ yarn-debug.log*
 CLAUDE.md
 AGENTS.md
 GEMINI.md
+
+# Session data
+session/

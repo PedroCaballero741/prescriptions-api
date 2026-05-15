@@ -27,6 +27,8 @@ model User {
   createdAt DateTime  @default(now())
   doctor    Doctor?
   patient   Patient?
+
+  @@index([role, createdAt])
 }
 
 model Doctor {
@@ -71,4 +73,6 @@ model PrescriptionItem {
   quantity       Int?
   instructions   String?
   prescription   Prescription @relation(fields: [prescriptionId], references: [id], onDelete: Cascade)
+
+  @@index([prescriptionId])
 }

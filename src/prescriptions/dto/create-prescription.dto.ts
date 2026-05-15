@@ -2,6 +2,7 @@ import { Type } from 'class-transformer';
 import {
   ArrayMinSize,
   IsArray,
+  IsEmail,
   IsInt,
   IsOptional,
   IsString,
@@ -30,13 +31,20 @@ class CreatePrescriptionItemDto {
 }
 
 export class CreatePrescriptionDto {
+  @IsOptional()
   @IsString()
   @MinLength(1)
-  patientId: string;
+  patientId?: string;
 
+  @IsOptional()
+  @IsEmail()
+  patientEmail?: string;
+
+  /** If omitted, a unique code is generated server-side. */
+  @IsOptional()
   @IsString()
-  @MinLength(1)
-  code: string;
+  @MinLength(3)
+  code?: string;
 
   @IsOptional()
   @IsString()
