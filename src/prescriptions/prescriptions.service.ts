@@ -7,7 +7,10 @@ import {
 } from '@nestjs/common';
 import { Prisma, PrescriptionStatus, Role } from '@prisma/client';
 import PDFDocument from 'pdfkit';
+import QRCode from 'qrcode';
 import { randomBytes } from 'crypto';
+import { existsSync } from 'fs';
+import { join } from 'path';
 import { JwtUser } from '../auth/interfaces/jwt-user.interface';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreatePrescriptionDto } from './dto/create-prescription.dto';
@@ -42,6 +45,31 @@ const PRESCRIPTION_INCLUDE = {
     },
   },
 } satisfies Prisma.PrescriptionInclude;
+
+// Include used specifically for PDF generation — adds signature/license fields from doctor
+const PDF_PRESCRIPTION_INCLUDE = {
+  items: true,
+  patient: {
+    include: {
+      user: { select: { id: true, email: true, name: true } },
+    },
+  },
+  author: {
+    select: {
+      id: true,
+      userId: true,
+      specialty: true,
+      signatureText: true,
+      signatureImage: true,
+      licenseImage: true,
+      user: { select: { id: true, email: true, name: true } },
+    },
+  },
+} satisfies Prisma.PrescriptionInclude;
+
+type PrescriptionForPdf = Prisma.PrescriptionGetPayload<{
+  include: typeof PDF_PRESCRIPTION_INCLUDE;
+}>;
 
 type PrescriptionWithRelations = Prisma.PrescriptionGetPayload<{
   include: typeof PRESCRIPTION_INCLUDE;
@@ -197,8 +225,52 @@ export class PrescriptionsService {
     return this.listPrescriptions(query, {});
   }
 
+  async getPublicByCode(code: string) {
+    const prescription = await this.prisma.prescription.findUnique({
+      where: { code },
+      select: {
+        code: true,
+        status: true,
+        createdAt: true,
+        items: {
+          select: {
+            id: true,
+            name: true,
+            dosage: true,
+            quantity: true,
+            instructions: true,
+          },
+        },
+        author: {
+          select: {
+            specialty: true,
+            user: { select: { name: true } },
+          },
+        },
+      },
+    });
+
+    if (!prescription) throw new NotFoundException('Prescription not found');
+
+    return {
+      code: prescription.code,
+      status: prescription.status,
+      issuedAt: prescription.createdAt,
+      items: prescription.items,
+      doctor: {
+        name: prescription.author.user.name,
+        specialty: prescription.author.specialty ?? null,
+      },
+    };
+  }
+
   async getPdfForUser(user: JwtUser, prescriptionId: string) {
-    const prescription = await this.getPrescriptionOrThrow(prescriptionId);
+    const prescription = await this.prisma.prescription.findUnique({
+      where: { id: prescriptionId },
+      include: PDF_PRESCRIPTION_INCLUDE,
+    });
+    if (!prescription) throw new NotFoundException('Prescription not found');
+
     await this.assertPdfAccess(user, prescription);
 
     return {
@@ -459,77 +531,318 @@ export class PrescriptionsService {
     throw new ForbiddenException('Role is not allowed to access prescriptions');
   }
 
-  private buildPdf(prescription: PrescriptionWithRelations): Promise<Buffer> {
-    return new Promise((resolve, reject) => {
-      const doc = new PDFDocument({ margin: 48 });
-      const chunks: Buffer[] = [];
+  private async buildPdf(prescription: PrescriptionForPdf): Promise<Buffer> {
+    const appOrigin = process.env.APP_ORIGIN ?? 'http://localhost:3000';
+    const qrUrl = `${appOrigin}/rx/${prescription.code}`;
+    const qrBuffer = await QRCode.toBuffer(qrUrl, {
+      width: 96,
+      margin: 1,
+      color: { dark: '#111827', light: '#ffffff' },
+    });
 
+    return new Promise((resolve, reject) => {
+      // A4 page, 48pt margins
+      const doc = new PDFDocument({ size: 'A4', margin: 48 });
+      const chunks: Buffer[] = [];
       doc.on('data', (chunk: Buffer) => chunks.push(chunk));
       doc.on('end', () => resolve(Buffer.concat(chunks)));
       doc.on('error', reject);
 
-      doc.fontSize(20).text('Prescription', { align: 'center' });
-      doc.moveDown();
+      const ML = 48;          // margin left
+      const MR = 48;          // margin right
+      const PW = 595.28;      // A4 width
+      const CW = PW - ML - MR; // content width ≈ 499
+      const QR_SIZE = 90;
+      const QR_X = PW - MR - QR_SIZE;
 
-      this.writeSectionTitle(doc, 'Prescription details');
-      this.writeField(doc, 'Code', prescription.code);
-      this.writeField(doc, 'Date', prescription.createdAt.toISOString());
-      this.writeField(doc, 'Status', prescription.status);
-      this.writeField(doc, 'Notes', prescription.notes ?? 'N/A');
-      doc.moveDown();
+      // ── HEADER ──────────────────────────────────────────────────────────────
+      const headerY = doc.y;
 
-      this.writeSectionTitle(doc, 'Patient');
-      this.writeField(doc, 'Name', prescription.patient.user.name);
-      this.writeField(doc, 'Email', prescription.patient.user.email);
-      this.writeField(doc, 'Patient ID', prescription.patient.id);
-      this.writeField(
+      // QR — absolute top-right
+      doc.image(qrBuffer, QR_X, headerY, { width: QR_SIZE, height: QR_SIZE });
+
+      // Title block — left side, constrained width to not overlap QR
+      const textW = CW - QR_SIZE - 16;
+      doc
+        .font('Helvetica-Bold')
+        .fontSize(20)
+        .fillColor('#111827')
+        .text('PRESCRIPCIÓN MÉDICA', ML, headerY, { width: textW });
+
+      doc
+        .font('Helvetica')
+        .fontSize(9)
+        .fillColor('#6b7280')
+        .text('RxFlow Medical Platform', ML, doc.y, { width: textW });
+
+      doc.moveDown(0.5);
+
+      // Code / Date / Status chips
+      const date = prescription.createdAt.toLocaleDateString('es-MX', {
+        day: '2-digit',
+        month: 'long',
+        year: 'numeric',
+      });
+      const statusLabel =
+        prescription.status === PrescriptionStatus.consumed
+          ? 'CONSUMIDA'
+          : 'PENDIENTE';
+
+      doc
+        .font('Helvetica-Bold')
+        .fontSize(10)
+        .fillColor('#111827')
+        .text(`Código: `, ML, doc.y, { continued: true, width: textW })
+        .font('Helvetica')
+        .text(prescription.code, { continued: true })
+        .font('Helvetica-Bold')
+        .text('   Fecha: ', { continued: true })
+        .font('Helvetica')
+        .text(date, { continued: true })
+        .font('Helvetica-Bold')
+        .text('   Estado: ', { continued: true })
+        .font('Helvetica')
+        .fillColor(
+          prescription.status === PrescriptionStatus.consumed
+            ? '#059669'
+            : '#d97706',
+        )
+        .text(statusLabel);
+
+      // Ensure we're past the QR before drawing the divider
+      const afterHeader = Math.max(doc.y, headerY + QR_SIZE) + 12;
+      this.drawDivider(doc, ML, afterHeader, PW - MR);
+
+      // ── PATIENT ─────────────────────────────────────────────────────────────
+      doc.y = afterHeader + 14;
+      this.writeSectionLabel(doc, 'PACIENTE', ML);
+      doc.moveDown(0.4);
+
+      const patient = prescription.patient;
+      this.writeRow(doc, 'Nombre', patient.user.name, ML, CW);
+      this.writeRow(doc, 'Email', patient.user.email, ML, CW);
+      this.writeRow(
         doc,
-        'Birth date',
-        prescription.patient.birthDate
-          ? prescription.patient.birthDate.toISOString()
-          : 'N/A',
+        'Fecha de nacimiento',
+        patient.birthDate
+          ? patient.birthDate.toLocaleDateString('es-MX', {
+              day: '2-digit',
+              month: 'long',
+              year: 'numeric',
+            })
+          : 'No registrada',
+        ML,
+        CW,
       );
-      doc.moveDown();
 
-      this.writeSectionTitle(doc, 'Doctor');
-      this.writeField(doc, 'Name', prescription.author.user.name);
-      this.writeField(doc, 'Email', prescription.author.user.email);
-      this.writeField(doc, 'Doctor ID', prescription.author.id);
-      this.writeField(doc, 'Specialty', prescription.author.specialty ?? 'N/A');
-      doc.moveDown();
+      doc.moveDown(0.6);
+      this.drawDivider(doc, ML, doc.y, PW - MR);
 
-      this.writeSectionTitle(doc, 'Items');
+      // ── MEDICATIONS ─────────────────────────────────────────────────────────
+      doc.moveDown(0.6);
+      this.writeSectionLabel(doc, 'MEDICAMENTOS', ML);
+      doc.moveDown(0.4);
 
       if (prescription.items.length === 0) {
-        doc.font('Helvetica').fontSize(11).text('No items');
+        doc.font('Helvetica').fontSize(10).fillColor('#6b7280').text('Sin items registrados.', ML);
       } else {
-        prescription.items.forEach((item, index) => {
+        prescription.items.forEach((item, i) => {
+          const itemY = doc.y;
+          // Item number circle background
+          doc
+            .roundedRect(ML, itemY, CW, 1, 0)
+            .fillColor('#f9fafb');
+
           doc
             .font('Helvetica-Bold')
             .fontSize(11)
-            .text(`${index + 1}. ${item.name}`);
-          doc.font('Helvetica').fontSize(11);
-          doc.text(`Dosage: ${item.dosage ?? 'N/A'}`);
-          doc.text(`Quantity: ${item.quantity ?? 'N/A'}`);
-          doc.text(`Instructions: ${item.instructions ?? 'N/A'}`);
-          doc.moveDown(0.5);
+            .fillColor('#111827')
+            .text(`${i + 1}. ${item.name}`, ML, itemY, { width: CW });
+
+          doc.font('Helvetica').fontSize(9.5).fillColor('#374151');
+
+          const parts: string[] = [];
+          if (item.dosage) parts.push(`Dosis: ${item.dosage}`);
+          if (item.quantity) parts.push(`Cantidad: ${item.quantity}`);
+          if (parts.length) doc.text(parts.join('   ·   '), ML, doc.y, { width: CW });
+
+          if (item.instructions) {
+            doc
+              .fillColor('#6b7280')
+              .text(`Indicaciones: ${item.instructions}`, ML, doc.y, { width: CW });
+          }
+
+          if (i < prescription.items.length - 1) doc.moveDown(0.5);
         });
       }
+
+      // Notes
+      if (prescription.notes) {
+        doc.moveDown(0.6);
+        this.drawDivider(doc, ML, doc.y, PW - MR);
+        doc.moveDown(0.6);
+        this.writeSectionLabel(doc, 'NOTAS', ML);
+        doc.moveDown(0.3);
+        doc
+          .font('Helvetica-Oblique')
+          .fontSize(10)
+          .fillColor('#374151')
+          .text(prescription.notes, ML, doc.y, { width: CW });
+      }
+
+      // ── DOCTOR FOOTER ────────────────────────────────────────────────────────
+      doc.moveDown(1);
+      this.drawDivider(doc, ML, doc.y, PW - MR);
+      doc.moveDown(0.7);
+
+      const footerY = doc.y;
+      const author = prescription.author;
+
+      // License image — right side
+      const LICENSE_W = 80;
+      const LICENSE_H = 100;
+      const licenseX = PW - MR - LICENSE_W;
+      let licenseDrawn = false;
+
+      if (author.licenseImage) {
+        const licensePath = join(
+          process.cwd(),
+          'uploads',
+          'doctors',
+          author.id,
+          author.licenseImage,
+        );
+        if (existsSync(licensePath)) {
+          try {
+            doc.image(licensePath, licenseX, footerY, {
+              width: LICENSE_W,
+              height: LICENSE_H,
+              cover: [LICENSE_W, LICENSE_H],
+            });
+            doc
+              .font('Helvetica')
+              .fontSize(7)
+              .fillColor('#9ca3af')
+              .text('Cédula Profesional', licenseX, footerY + LICENSE_H + 2, {
+                width: LICENSE_W,
+                align: 'center',
+              });
+            licenseDrawn = true;
+          } catch {
+            // skip if image unreadable
+          }
+        }
+      }
+
+      // Doctor text — left side, constrained width
+      const doctorTextW = licenseDrawn ? CW - LICENSE_W - 16 : CW;
+
+      doc
+        .font('Helvetica-Bold')
+        .fontSize(12)
+        .fillColor('#111827')
+        .text(`Dr. ${author.user.name}`, ML, footerY, { width: doctorTextW });
+
+      if (author.specialty) {
+        doc
+          .font('Helvetica')
+          .fontSize(10)
+          .fillColor('#6b7280')
+          .text(author.specialty, ML, doc.y, { width: doctorTextW });
+      }
+
+      doc.moveDown(0.8);
+
+      // Signature
+      const sigY = doc.y;
+      const SIG_W = 160;
+      const SIG_H = 56;
+
+      if (author.signatureImage) {
+        const sigPath = join(
+          process.cwd(),
+          'uploads',
+          'doctors',
+          author.id,
+          author.signatureImage,
+        );
+        if (existsSync(sigPath)) {
+          try {
+            doc.image(sigPath, ML, sigY, { width: SIG_W, height: SIG_H, fit: [SIG_W, SIG_H] });
+            doc.y = sigY + SIG_H + 4;
+          } catch {
+            this.drawSignatureLine(doc, ML, sigY, SIG_W);
+          }
+        } else {
+          this.drawSignatureLine(doc, ML, sigY, SIG_W);
+        }
+      } else if (author.signatureText) {
+        doc
+          .font('Helvetica-Oblique')
+          .fontSize(18)
+          .fillColor('#374151')
+          .text(author.signatureText, ML, sigY, { width: SIG_W });
+        doc.y = doc.y + 4;
+        this.drawSignatureLine(doc, ML, doc.y, SIG_W);
+      } else {
+        this.drawSignatureLine(doc, ML, sigY, SIG_W);
+        doc.y = sigY + SIG_H;
+      }
+
+      doc
+        .font('Helvetica')
+        .fontSize(8)
+        .fillColor('#9ca3af')
+        .text('Firma del Médico', ML, doc.y + 2, { width: SIG_W, align: 'left' });
+
+      // QR label below QR
+      doc
+        .font('Helvetica')
+        .fontSize(7)
+        .fillColor('#9ca3af')
+        .text('Escanea para verificar', QR_X, headerY + QR_SIZE + 2, {
+          width: QR_SIZE,
+          align: 'center',
+        });
 
       doc.end();
     });
   }
 
-  private writeSectionTitle(doc: PDFKit.PDFDocument, title: string) {
-    doc.font('Helvetica-Bold').fontSize(13).text(title);
-    doc.moveDown(0.3);
+  private drawDivider(doc: PDFKit.PDFDocument, x1: number, y: number, x2: number) {
+    doc.moveTo(x1, y).lineTo(x2, y).strokeColor('#e5e7eb').lineWidth(0.5).stroke();
+    doc.lineWidth(1).strokeColor('#000000'); // reset
   }
 
-  private writeField(doc: PDFKit.PDFDocument, label: string, value: string) {
-    doc.font('Helvetica-Bold').fontSize(11).text(`${label}: `, {
-      continued: true,
-    });
-    doc.font('Helvetica').fontSize(11).text(value);
+  private drawSignatureLine(doc: PDFKit.PDFDocument, x: number, y: number, width: number) {
+    doc.moveTo(x, y + 40).lineTo(x + width, y + 40).strokeColor('#9ca3af').lineWidth(0.8).stroke();
+    doc.lineWidth(1).strokeColor('#000000');
+  }
+
+  private writeSectionLabel(doc: PDFKit.PDFDocument, label: string, x: number) {
+    doc
+      .font('Helvetica-Bold')
+      .fontSize(8.5)
+      .fillColor('#6b7280')
+      .text(label, x, doc.y, { characterSpacing: 1.2 });
+    doc.fillColor('#111827');
+  }
+
+  private writeRow(
+    doc: PDFKit.PDFDocument,
+    label: string,
+    value: string,
+    x: number,
+    width: number,
+  ) {
+    doc
+      .font('Helvetica-Bold')
+      .fontSize(10)
+      .fillColor('#374151')
+      .text(`${label}: `, x, doc.y, { continued: true, width })
+      .font('Helvetica')
+      .fillColor('#111827')
+      .text(value);
   }
 
   private buildFileToken(code: string): string {
