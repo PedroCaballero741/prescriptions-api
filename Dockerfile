@@ -25,6 +25,6 @@ COPY --from=builder /app/node_modules/@prisma ./node_modules/@prisma
 COPY prisma ./prisma/
 COPY prisma.config.js ./
 
-EXPOSE 3000
+EXPOSE 4000
 
-CMD ["sh", "-c", "npx prisma db push && node dist/main"]
+CMD ["sh", "-c", "npx prisma db push && node dist/src/main.js"]
