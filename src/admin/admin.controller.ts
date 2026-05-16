@@ -1,4 +1,5 @@
-import { Body, Controller, Get, Patch, Query, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, Get, HttpCode, Patch, Query, Res, UseGuards } from '@nestjs/common';
+import type { Response } from 'express';
 import { Role } from '@prisma/client';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
@@ -40,5 +41,20 @@ export class AdminController {
   @Patch('settings/notifications')
   updateNotifSettings(@Body() dto: UpdateNotifSettingsDto) {
     return this.adminService.updateNotifSettings(dto);
+  }
+
+  @Get('export')
+  async exportCsv(@Res() res: Response) {
+    const csv = await this.adminService.exportCsv();
+    const filename = `rxflow-export-${new Date().toISOString().slice(0, 10)}.csv`;
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    res.send(csv);
+  }
+
+  @Delete('audit-log')
+  @HttpCode(200)
+  clearAuditLog() {
+    return this.adminService.clearAuditLog();
   }
 }

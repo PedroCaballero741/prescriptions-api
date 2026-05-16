@@ -2,6 +2,7 @@ import {
   BadRequestException,
   ConflictException,
   Injectable,
+  NotFoundException,
 } from '@nestjs/common';
 import { Prisma, Role } from '@prisma/client';
 import * as bcrypt from 'bcryptjs';
@@ -23,14 +24,14 @@ export class UsersService {
   constructor(private readonly prisma: PrismaService) {}
 
   async findByEmail(email: string) {
-    return this.prisma.user.findUnique({
-      where: { email: email.toLowerCase() },
+    return this.prisma.user.findFirst({
+      where: { email: email.toLowerCase(), deletedAt: null },
     });
   }
 
   async findById(id: string) {
-    return this.prisma.user.findUnique({
-      where: { id },
+    return this.prisma.user.findFirst({
+      where: { id, deletedAt: null },
     });
   }
 
@@ -68,7 +69,7 @@ export class UsersService {
 
   async listForAdmin(query: ListUsersQueryDto) {
     const { page, pageSize } = resolvePagination(query);
-    const where: Prisma.UserWhereInput = {};
+    const where: Prisma.UserWhereInput = { deletedAt: null };
 
     if (query.role) {
       where.role = query.role;
@@ -153,6 +154,17 @@ export class UsersService {
     });
 
     return this.toSafeUser(user);
+  }
+
+  async softDelete(id: string): Promise<SafeUser> {
+    const user = await this.findById(id);
+    if (!user) throw new NotFoundException('User not found');
+
+    const updated = await this.prisma.user.update({
+      where: { id },
+      data: { deletedAt: new Date() },
+    });
+    return this.toSafeUser(updated);
   }
 
   private toSafeUser(user: { id: string; email: string; name: string; role: Role; createdAt: Date }): SafeUser {
