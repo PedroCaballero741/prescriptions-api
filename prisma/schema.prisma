@@ -25,10 +25,25 @@ model User {
   name      String
   role      Role
   createdAt DateTime  @default(now())
+  deletedAt DateTime?
   doctor    Doctor?
   patient   Patient?
 
   @@index([role, createdAt])
+  @@index([deletedAt])
+}
+
+model AuditLog {
+  id        String   @id @default(cuid())
+  action    String
+  entity    String
+  entityId  String?
+  actorId   String?
+  metadata  Json?
+  createdAt DateTime @default(now())
+
+  @@index([createdAt])
+  @@index([entity, entityId])
 }
 
 model Doctor {
