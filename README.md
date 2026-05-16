@@ -118,14 +118,17 @@ JWT_REFRESH_SECRET=cambia_esto_en_produccion_refresh
 JWT_ACCESS_EXPIRES_IN_SECONDS=900       # 15 minutos
 JWT_REFRESH_EXPIRES_IN_SECONDS=604800   # 7 días
 
-# Origen del frontend (para CORS y URLs de QR en PDFs)
-APP_ORIGIN=http://localhost:3000
+# Origen(es) del frontend para CORS (separa múltiples valores con coma)
+APP_ORIGIN=http://localhost:3000,https://*.vercel.app
+
+# URL pública del frontend para enlaces/QR en PDFs
+APP_PUBLIC_URL=http://localhost:3000
 
 # Puerto del servidor
 PORT=4000
 ```
 
-> **Nota:** `APP_ORIGIN` debe coincidir exactamente con el origen del frontend. En producción será la URL de Vercel o el dominio configurado.
+> **Nota:** `APP_ORIGIN` acepta múltiples orígenes y wildcard (ej. `https://*.vercel.app`) para soportar previews de Vercel. Usa `APP_PUBLIC_URL` para definir el dominio canónico del frontend en los QR.
 
 ---
 
@@ -260,8 +263,8 @@ Los tests unitarios cubren `PrescriptionsService` (creación, acceso por rol, co
 
 | Servicio | URL |
 |---|---|
-| API | *(añadir tras despliegue)* |
-| Frontend | *(ver README de `prescriptions-web`)* |
+| API | `https://prescriptions-api-production-7f18.up.railway.app` |
+| Frontend | `https://prescriptions-web-seven.vercel.app` |
 
 Plataformas recomendadas: **Render** o **Railway** para la API, **Neon** para PostgreSQL, **Vercel** para el frontend.
 

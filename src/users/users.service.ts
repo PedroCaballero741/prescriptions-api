@@ -167,7 +167,13 @@ export class UsersService {
     return this.toSafeUser(updated);
   }
 
-  private toSafeUser(user: { id: string; email: string; name: string; role: Role; createdAt: Date }): SafeUser {
+  private toSafeUser(user: {
+    id: string;
+    email: string;
+    name: string;
+    role: Role;
+    createdAt: Date;
+  }): SafeUser {
     return {
       id: user.id,
       email: user.email,

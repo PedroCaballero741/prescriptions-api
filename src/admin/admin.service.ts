@@ -53,13 +53,23 @@ export class AdminService {
     const [users, prescriptions] = await Promise.all([
       this.prisma.user.findMany({
         where: { deletedAt: null },
-        select: { id: true, name: true, email: true, role: true, createdAt: true },
+        select: {
+          id: true,
+          name: true,
+          email: true,
+          role: true,
+          createdAt: true,
+        },
         orderBy: { createdAt: 'asc' },
       }),
       this.prisma.prescription.findMany({
         include: {
-          patient: { select: { user: { select: { name: true, email: true } } } },
-          author: { select: { user: { select: { name: true } }, specialty: true } },
+          patient: {
+            select: { user: { select: { name: true, email: true } } },
+          },
+          author: {
+            select: { user: { select: { name: true } }, specialty: true },
+          },
           items: true,
         },
         orderBy: { createdAt: 'asc' },
@@ -72,7 +82,9 @@ export class AdminService {
     lines.push('USERS');
     lines.push(this.csvRow(['id', 'name', 'email', 'role', 'createdAt']));
     for (const u of users) {
-      lines.push(this.csvRow([u.id, u.name, u.email, u.role, u.createdAt.toISOString()]));
+      lines.push(
+        this.csvRow([u.id, u.name, u.email, u.role, u.createdAt.toISOString()]),
+      );
     }
 
     lines.push('');
@@ -81,14 +93,24 @@ export class AdminService {
     lines.push('PRESCRIPTIONS');
     lines.push(
       this.csvRow([
-        'id', 'code', 'status', 'createdAt', 'consumedAt',
-        'patientName', 'patientEmail', 'doctorName', 'specialty',
+        'id',
+        'code',
+        'status',
+        'createdAt',
+        'consumedAt',
+        'patientName',
+        'patientEmail',
+        'doctorName',
+        'specialty',
         'items',
       ]),
     );
     for (const rx of prescriptions) {
       const itemsSummary = rx.items
-        .map((i) => `${i.name}${i.dosage ? ' ' + i.dosage : ''}${i.quantity ? ' x' + i.quantity : ''}`)
+        .map(
+          (i) =>
+            `${i.name}${i.dosage ? ' ' + i.dosage : ''}${i.quantity ? ' x' + i.quantity : ''}`,
+        )
         .join(' | ');
       lines.push(
         this.csvRow([

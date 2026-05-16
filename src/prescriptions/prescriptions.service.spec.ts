@@ -350,8 +350,16 @@ describe('PrescriptionsService', () => {
   // ── getPdfForUser — access control ───────────────────────────────────────────
 
   describe('getPdfForUser — access control', () => {
-    const adminUser = { userId: 'admin-1', role: Role.admin, email: 'admin@test.com' };
-    const patientUser = { userId: USER_PATIENT_ID, role: Role.patient, email: 'patient@test.com' };
+    const adminUser = {
+      userId: 'admin-1',
+      role: Role.admin,
+      email: 'admin@test.com',
+    };
+    const patientUser = {
+      userId: USER_PATIENT_ID,
+      role: Role.patient,
+      email: 'patient@test.com',
+    };
 
     it('allows admin to access any prescription PDF', async () => {
       mockPrisma.prescription.findUnique.mockResolvedValueOnce(

@@ -105,7 +105,9 @@ export class DoctorsController {
   @Post('doctor/profile/signature')
   @UseInterceptors(
     FileInterceptor('file', {
-      storage: imageStorage((req) => (req as Request & { user: JwtUser }).user.userId),
+      storage: imageStorage(
+        (req) => (req as Request & { user: JwtUser }).user.userId,
+      ),
       fileFilter: imageFileFilter,
       limits: { fileSize: 2 * 1024 * 1024 },
     }),
@@ -114,7 +116,10 @@ export class DoctorsController {
     @Req() req: Request & { user: JwtUser },
     @UploadedFile() file: Express.Multer.File,
   ) {
-    return this.doctorsService.saveSignatureImage(req.user.userId, file.filename);
+    return this.doctorsService.saveSignatureImage(
+      req.user.userId,
+      file.filename,
+    );
   }
 
   @Delete('doctor/profile/signature')
@@ -126,7 +131,9 @@ export class DoctorsController {
   @Post('doctor/profile/license')
   @UseInterceptors(
     FileInterceptor('file', {
-      storage: imageStorage((req) => (req as Request & { user: JwtUser }).user.userId),
+      storage: imageStorage(
+        (req) => (req as Request & { user: JwtUser }).user.userId,
+      ),
       fileFilter: imageFileFilter,
       limits: { fileSize: 5 * 1024 * 1024 },
     }),

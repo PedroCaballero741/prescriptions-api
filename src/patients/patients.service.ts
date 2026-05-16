@@ -1,7 +1,10 @@
 import { ForbiddenException, Injectable } from '@nestjs/common';
 import { Prisma, Role } from '@prisma/client';
 import { JwtUser } from '../auth/interfaces/jwt-user.interface';
-import { PaginationQueryDto, resolvePagination } from '../common/dto/pagination-query.dto';
+import {
+  PaginationQueryDto,
+  resolvePagination,
+} from '../common/dto/pagination-query.dto';
 import { PrismaService } from '../prisma/prisma.service';
 import { PrescriptionQueryDto } from '../prescriptions/dto/prescription-query.dto';
 import { PrescriptionsService } from '../prescriptions/prescriptions.service';

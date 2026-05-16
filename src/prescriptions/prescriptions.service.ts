@@ -394,7 +394,9 @@ export class PrescriptionsService {
     };
   }
 
-  private async resolvePatientRef(input: CreatePrescriptionDto): Promise<string> {
+  private async resolvePatientRef(
+    input: CreatePrescriptionDto,
+  ): Promise<string> {
     if (input.patientId?.trim()) {
       const patient = await this.prisma.patient.findUnique({
         where: { id: input.patientId.trim() },
@@ -417,7 +419,9 @@ export class PrescriptionsService {
     return patient.id;
   }
 
-  private async ensureUniquePrescriptionCode(desired?: string): Promise<string> {
+  private async ensureUniquePrescriptionCode(
+    desired?: string,
+  ): Promise<string> {
     if (desired?.trim()) {
       const code = desired.trim();
       const exists = await this.prisma.prescription.findUnique({
@@ -444,10 +448,14 @@ export class PrescriptionsService {
       });
     }
 
-    throw new BadRequestException('Could not allocate a unique prescription code');
+    throw new BadRequestException(
+      'Could not allocate a unique prescription code',
+    );
   }
 
-  private buildWhere(query: PrescriptionQueryDto): Prisma.PrescriptionWhereInput {
+  private buildWhere(
+    query: PrescriptionQueryDto,
+  ): Prisma.PrescriptionWhereInput {
     const hasFrom = Boolean(query.from);
     const hasTo = Boolean(query.to);
 
@@ -532,8 +540,13 @@ export class PrescriptionsService {
   }
 
   private async buildPdf(prescription: PrescriptionForPdf): Promise<Buffer> {
-    const appOrigin = process.env.APP_ORIGIN ?? 'http://localhost:3000';
-    const qrUrl = `${appOrigin}/rx/${prescription.code}`;
+    const appPublicUrl = process.env.APP_PUBLIC_URL?.trim();
+    const appOrigin = process.env.APP_ORIGIN
+      ?.split(',')
+      .map((origin) => origin.trim())
+      .find((origin) => origin.length > 0 && !origin.includes('*'));
+    const qrBaseUrl = appPublicUrl || appOrigin || 'http://localhost:3000';
+    const qrUrl = `${qrBaseUrl}/rx/${prescription.code}`;
     const qrBuffer = await QRCode.toBuffer(qrUrl, {
       width: 90,
       margin: 1,
@@ -541,33 +554,37 @@ export class PrescriptionsService {
     });
 
     return new Promise((resolve, reject) => {
-      const doc = new PDFDocument({ size: 'A4', margin: 0, autoFirstPage: true });
+      const doc = new PDFDocument({
+        size: 'A4',
+        margin: 0,
+        autoFirstPage: true,
+      });
       const chunks: Buffer[] = [];
       doc.on('data', (chunk: Buffer) => chunks.push(chunk));
       doc.on('end', () => resolve(Buffer.concat(chunks)));
       doc.on('error', reject);
 
       // ── Layout constants ─────────────────────────────────────────────────
-      const L = 15;        // left edge
-      const T = 15;        // top edge
-      const W = 565;       // content width  (595.28 − 30)
-      const PAGE_H = 841;  // A4 height
+      const L = 15; // left edge
+      const T = 15; // top edge
+      const W = 565; // content width  (595.28 − 30)
+      const PAGE_H = 841; // A4 height
 
       // Row heights
       const H_FORM = 18;
-      const H_PAT_H = 14;   // patient section headers
-      const H_PAT_D = 18;   // patient section data
-      const H_MED_H = 13;   // medication column header
-      const H_DET_H = 13;   // detail row header (DOSIS, VIA…)
-      const H_DET_D = 14;   // detail row data
-      const H_SPAN = 14;    // posology / recommendations rows
+      const H_PAT_H = 14; // patient section headers
+      const H_PAT_D = 18; // patient section data
+      const H_MED_H = 13; // medication column header
+      const H_DET_H = 13; // detail row header (DOSIS, VIA…)
+      const H_DET_D = 14; // detail row data
+      const H_SPAN = 14; // posology / recommendations rows
       const H_FOOTER = 20;
       const H_ORDER = 26;
 
       // Column layouts
-      const FW = W - 78;    // formula section width (QR takes 78pt)
-      const F1 = [55, 100, 125, FW - 280] as const;  // row-1 formula cols
-      const P1 = [40, 315, 120, 90] as const;         // patient row 1
+      const FW = W - 78; // formula section width (QR takes 78pt)
+      const F1 = [55, 100, 125, FW - 280] as const; // row-1 formula cols
+      const P1 = [40, 315, 120, 90] as const; // patient row 1
       const P2 = [65, 100, 45, 70, 285] as const; // patient row 2
       // Medication header cols: NUM | MED NAME | CONCENTRACIÓN | FORMA FARMACÉUTICA
       const MA = [22, 198, 168, W - 22 - 198 - 168] as const;
@@ -592,7 +609,11 @@ export class PrescriptionsService {
         .font('Helvetica')
         .fontSize(7)
         .fillColor('#000000')
-        .text('Página 1 de 1', L, y + 5, { width: W, align: 'right', lineBreak: false });
+        .text('Página 1 de 1', L, y + 5, {
+          width: W,
+          align: 'right',
+          lineBreak: false,
+        });
 
       y += 18;
 
@@ -618,20 +639,28 @@ export class PrescriptionsService {
 
       // ── FORMULA TABLE ─────────────────────────────────────────────────────
       const formY = y;
-      const qrH = H_FORM * 2;   // QR cell spans both formula rows
+      const qrH = H_FORM * 2; // QR cell spans both formula rows
       const QR_SIZE = qrH - 4;
 
       // Row 1: FÓRMULA | code | FECHA DE PRESCRIPCIÓN | date
       x = L;
       this.pdfCell(doc, x, y, F1[0], H_FORM, 'FÓRMULA');
       x += F1[0];
-      this.pdfCell(doc, x, y, F1[1], H_FORM, prescription.code, { bold: true, size: 8 });
+      this.pdfCell(doc, x, y, F1[1], H_FORM, prescription.code, {
+        bold: true,
+        size: 8,
+      });
       x += F1[1];
       this.pdfCell(doc, x, y, F1[2], H_FORM, 'FECHA DE PRESCRIPCIÓN');
       x += F1[2];
       const prescDateStr = prescription.createdAt.toLocaleString('es-CO', {
-        day: '2-digit', month: '2-digit', year: 'numeric',
-        hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false,
+        day: '2-digit',
+        month: '2-digit',
+        year: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+        hour12: false,
       });
       this.pdfCell(doc, x, y, F1[3], H_FORM, prescDateStr, { size: 7 });
 
@@ -649,19 +678,27 @@ export class PrescriptionsService {
       x = L;
       this.pdfCell(doc, x, y, 120, H_FORM, 'ESM QUE GENERA LA FÓRMULA');
       x += 120;
-      this.pdfCell(doc, x, y, FW - 120, H_FORM, 'RxFlow Medical Platform', { bold: true, size: 8 });
+      this.pdfCell(doc, x, y, FW - 120, H_FORM, 'RxFlow Medical Platform', {
+        bold: true,
+        size: 8,
+      });
 
       y += H_FORM + 5;
 
       // ── PATIENT TABLE ─────────────────────────────────────────────────────
       // Header row 1
       x = L;
-      (['GRADO', 'APELLIDOS Y NOMBRES DEL PACIENTE', 'EDAD', 'CAUSA EXTERNA'] as const).forEach(
-        (h, i) => {
-          this.pdfCell(doc, x, y, P1[i], H_PAT_H, h, { bold: true });
-          x += P1[i];
-        },
-      );
+      (
+        [
+          'GRADO',
+          'APELLIDOS Y NOMBRES DEL PACIENTE',
+          'EDAD',
+          'CAUSA EXTERNA',
+        ] as const
+      ).forEach((h, i) => {
+        this.pdfCell(doc, x, y, P1[i], H_PAT_H, h, { bold: true });
+        x += P1[i];
+      });
       y += H_PAT_H;
 
       // Data row 1
@@ -671,10 +708,18 @@ export class PrescriptionsService {
       x = L;
       this.pdfCell(doc, x, y, P1[0], H_PAT_D, '');
       x += P1[0];
-      this.pdfCell(doc, x, y, P1[1], H_PAT_D, prescription.patient.user.name.toUpperCase(), {
-        bold: true,
-        size: 8,
-      });
+      this.pdfCell(
+        doc,
+        x,
+        y,
+        P1[1],
+        H_PAT_D,
+        prescription.patient.user.name.toUpperCase(),
+        {
+          bold: true,
+          size: 8,
+        },
+      );
       x += P1[1];
       this.pdfCell(doc, x, y, P1[2], H_PAT_D, age, { size: 7 });
       x += P1[2];
@@ -684,7 +729,13 @@ export class PrescriptionsService {
       // Header row 2
       x = L;
       (
-        ['AFILIACIÓN', 'CENTRO DE COSTOS', 'ARL', 'EPS', 'LUGAR PRESCRIPCIÓN'] as const
+        [
+          'AFILIACIÓN',
+          'CENTRO DE COSTOS',
+          'ARL',
+          'EPS',
+          'LUGAR PRESCRIPCIÓN',
+        ] as const
       ).forEach((h, i) => {
         this.pdfCell(doc, x, y, P2[i], H_PAT_H, h, { bold: true });
         x += P2[i];
@@ -720,27 +771,52 @@ export class PrescriptionsService {
 
         // ── Med header row (skip NUM col — drawn separately spanning 2 rows)
         x = L + MA[0];
-        this.pdfCell(doc, x, y, MA[1], H_MED_H, 'MEDICAMENTO EN NOMBRE GENÉRICO', { bold: true });
+        this.pdfCell(
+          doc,
+          x,
+          y,
+          MA[1],
+          H_MED_H,
+          'MEDICAMENTO EN NOMBRE GENÉRICO',
+          { bold: true },
+        );
         x += MA[1];
-        this.pdfCell(doc, x, y, MA[2], H_MED_H, 'CONCENTRACIÓN', { bold: true });
+        this.pdfCell(doc, x, y, MA[2], H_MED_H, 'CONCENTRACIÓN', {
+          bold: true,
+        });
         x += MA[2];
-        this.pdfCell(doc, x, y, MA[3], H_MED_H, 'FORMA FARMACÉUTICA', { bold: true });
+        this.pdfCell(doc, x, y, MA[3], H_MED_H, 'FORMA FARMACÉUTICA', {
+          bold: true,
+        });
         y += H_MED_H;
 
         // ── Med name row (skip NUM col)
         x = L + MA[0];
-        const nameH = this.pdfCellWrap(doc, x, y, MA[1], 18, item.name.toUpperCase(), {
-          bold: true,
-          size: 8,
-        });
+        const nameH = this.pdfCellWrap(
+          doc,
+          x,
+          y,
+          MA[1],
+          18,
+          item.name.toUpperCase(),
+          {
+            bold: true,
+            size: 8,
+          },
+        );
         x += MA[1];
-        this.pdfCellWrap(doc, x, y, MA[2], nameH, item.dosage ?? '', { size: 7.5 });
+        this.pdfCellWrap(doc, x, y, MA[2], nameH, item.dosage ?? '', {
+          size: 7.5,
+        });
         x += MA[2];
         this.pdfCellWrap(doc, x, y, MA[3], nameH, '', { size: 7.5 });
 
         // ── NUM cell spanning header + name rows
         const numSpanH = H_MED_H + nameH;
-        doc.lineWidth(0.4).rect(L, medStartY, MA[0], numSpanH).stroke('#000000');
+        doc
+          .lineWidth(0.4)
+          .rect(L, medStartY, MA[0], numSpanH)
+          .stroke('#000000');
         doc
           .font('Helvetica-Bold')
           .fontSize(10)
@@ -756,7 +832,14 @@ export class PrescriptionsService {
         // ── Detail header row (full width)
         x = L;
         (
-          ['DOSIS', 'VIA ADM.', 'FREC.', 'TIEMPO TTO.', 'CANTIDAD', 'CANTIDAD EN LETRAS'] as const
+          [
+            'DOSIS',
+            'VIA ADM.',
+            'FREC.',
+            'TIEMPO TTO.',
+            'CANTIDAD',
+            'CANTIDAD EN LETRAS',
+          ] as const
         ).forEach((h, i) => {
           this.pdfCell(doc, x, y, MB[i], H_DET_H, h, { bold: true });
           x += MB[i];
@@ -803,7 +886,11 @@ export class PrescriptionsService {
           .font('Helvetica')
           .fontSize(7)
           .fillColor('#000000')
-          .text(posText, L + 3, y + 3, { width: W - 6, lineBreak: false, ellipsis: true });
+          .text(posText, L + 3, y + 3, {
+            width: W - 6,
+            lineBreak: false,
+            ellipsis: true,
+          });
         y += H_SPAN;
 
         // ── Recommendations (full width)
@@ -812,7 +899,10 @@ export class PrescriptionsService {
           .font('Helvetica')
           .fontSize(7)
           .fillColor('#000000')
-          .text('Recomendaciones:', L + 3, y + 3, { width: W - 6, lineBreak: false });
+          .text('Recomendaciones:', L + 3, y + 3, {
+            width: W - 6,
+            lineBreak: false,
+          });
         y += H_SPAN;
       });
 
@@ -844,16 +934,32 @@ export class PrescriptionsService {
       }
 
       const DOC_LABEL_W = 80;
-      this.pdfCell(doc, L, y, DOC_LABEL_W, H_FOOTER, 'Médico:', { bold: false });
-      this.pdfCell(doc, L + DOC_LABEL_W, y, W - DOC_LABEL_W, H_FOOTER,
-        `${prescription.author.user.name.toUpperCase()}`, { bold: true, size: 8.5 });
+      this.pdfCell(doc, L, y, DOC_LABEL_W, H_FOOTER, 'Médico:', {
+        bold: false,
+      });
+      this.pdfCell(
+        doc,
+        L + DOC_LABEL_W,
+        y,
+        W - DOC_LABEL_W,
+        H_FOOTER,
+        `${prescription.author.user.name.toUpperCase()}`,
+        { bold: true, size: 8.5 },
+      );
       y += H_FOOTER;
 
       // ── Specialty row ─────────────────────────────────────────────────────
       if (prescription.author.specialty) {
         this.pdfCell(doc, L, y, DOC_LABEL_W, H_FORM, 'Especialidad:');
-        this.pdfCell(doc, L + DOC_LABEL_W, y, W - DOC_LABEL_W, H_FORM,
-          prescription.author.specialty, { size: 8 });
+        this.pdfCell(
+          doc,
+          L + DOC_LABEL_W,
+          y,
+          W - DOC_LABEL_W,
+          H_FORM,
+          prescription.author.specialty,
+          { size: 8 },
+        );
         y += H_FORM;
       }
 
@@ -882,13 +988,22 @@ export class PrescriptionsService {
       // Signature block
       if (prescription.author.signatureImage) {
         const sigPath = join(
-          process.cwd(), 'uploads', 'doctors',
-          prescription.author.id, prescription.author.signatureImage,
+          process.cwd(),
+          'uploads',
+          'doctors',
+          prescription.author.id,
+          prescription.author.signatureImage,
         );
         if (existsSync(sigPath)) {
           try {
-            doc.image(sigPath, L, y, { width: SIG_W, height: SIG_H, fit: [SIG_W, SIG_H] });
-          } catch { /* skip unreadable */ }
+            doc.image(sigPath, L, y, {
+              width: SIG_W,
+              height: SIG_H,
+              fit: [SIG_W, SIG_H],
+            });
+          } catch {
+            /* skip unreadable */
+          }
         }
       } else if (prescription.author.signatureText) {
         doc
@@ -920,8 +1035,11 @@ export class PrescriptionsService {
       // License image (right of signature)
       if (prescription.author.licenseImage) {
         const licPath = join(
-          process.cwd(), 'uploads', 'doctors',
-          prescription.author.id, prescription.author.licenseImage,
+          process.cwd(),
+          'uploads',
+          'doctors',
+          prescription.author.id,
+          prescription.author.licenseImage,
         );
         if (existsSync(licPath)) {
           try {
@@ -940,12 +1058,17 @@ export class PrescriptionsService {
                 align: 'center',
                 lineBreak: false,
               });
-          } catch { /* skip */ }
+          } catch {
+            /* skip */
+          }
         }
       }
 
       // QR bottom-right
-      doc.image(qrBuffer, QR_BOT_X, y, { width: QR_BOT_SIZE, height: QR_BOT_SIZE });
+      doc.image(qrBuffer, QR_BOT_X, y, {
+        width: QR_BOT_SIZE,
+        height: QR_BOT_SIZE,
+      });
       doc
         .font('Helvetica')
         .fontSize(6.5)
@@ -995,9 +1118,7 @@ export class PrescriptionsService {
     if (!text) return;
 
     const textY =
-      valign === 'middle'
-        ? y + Math.max(pad, (h - size * 1.2) / 2)
-        : y + pad;
+      valign === 'middle' ? y + Math.max(pad, (h - size * 1.2) / 2) : y + pad;
 
     doc
       .font(bold ? 'Helvetica-Bold' : 'Helvetica')
@@ -1046,7 +1167,7 @@ export class PrescriptionsService {
     const now = new Date();
     let years = now.getFullYear() - birthDate.getFullYear();
     let months = now.getMonth() - birthDate.getMonth();
-    let days = now.getDate() - birthDate.getDate();
+    const days = now.getDate() - birthDate.getDate();
     if (days < 0) months--;
     if (months < 0) {
       years--;
@@ -1059,17 +1180,50 @@ export class PrescriptionsService {
     if (!n || n <= 0) return '';
     if (n > 999) return n.toString();
     const ones = [
-      '', 'UNO', 'DOS', 'TRES', 'CUATRO', 'CINCO', 'SEIS', 'SIETE', 'OCHO',
-      'NUEVE', 'DIEZ', 'ONCE', 'DOCE', 'TRECE', 'CATORCE', 'QUINCE',
-      'DIECISÉIS', 'DIECISIETE', 'DIECIOCHO', 'DIECINUEVE',
+      '',
+      'UNO',
+      'DOS',
+      'TRES',
+      'CUATRO',
+      'CINCO',
+      'SEIS',
+      'SIETE',
+      'OCHO',
+      'NUEVE',
+      'DIEZ',
+      'ONCE',
+      'DOCE',
+      'TRECE',
+      'CATORCE',
+      'QUINCE',
+      'DIECISÉIS',
+      'DIECISIETE',
+      'DIECIOCHO',
+      'DIECINUEVE',
     ];
     const tens = [
-      '', '', 'VEINTE', 'TREINTA', 'CUARENTA', 'CINCUENTA',
-      'SESENTA', 'SETENTA', 'OCHENTA', 'NOVENTA',
+      '',
+      '',
+      'VEINTE',
+      'TREINTA',
+      'CUARENTA',
+      'CINCUENTA',
+      'SESENTA',
+      'SETENTA',
+      'OCHENTA',
+      'NOVENTA',
     ];
     const hundreds = [
-      '', 'CIEN', 'DOSCIENTOS', 'TRESCIENTOS', 'CUATROCIENTOS', 'QUINIENTOS',
-      'SEISCIENTOS', 'SETECIENTOS', 'OCHOCIENTOS', 'NOVECIENTOS',
+      '',
+      'CIEN',
+      'DOSCIENTOS',
+      'TRESCIENTOS',
+      'CUATROCIENTOS',
+      'QUINIENTOS',
+      'SEISCIENTOS',
+      'SETECIENTOS',
+      'OCHOCIENTOS',
+      'NOVECIENTOS',
     ];
     if (n < 20) return ones[n];
     if (n === 21) return 'VEINTIUNO';

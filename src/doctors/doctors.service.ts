@@ -2,7 +2,10 @@ import { Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { existsSync, unlinkSync } from 'fs';
 import { join } from 'path';
-import { PaginationQueryDto, resolvePagination } from '../common/dto/pagination-query.dto';
+import {
+  PaginationQueryDto,
+  resolvePagination,
+} from '../common/dto/pagination-query.dto';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreatePrescriptionDto } from '../prescriptions/dto/create-prescription.dto';
 import { PrescriptionQueryDto } from '../prescriptions/dto/prescription-query.dto';
@@ -121,7 +124,13 @@ export class DoctorsService {
 
   private removeFile(doctorId: string, filename: string | null) {
     if (!filename) return;
-    const filePath = join(process.cwd(), 'uploads', 'doctors', doctorId, filename);
+    const filePath = join(
+      process.cwd(),
+      'uploads',
+      'doctors',
+      doctorId,
+      filename,
+    );
     if (existsSync(filePath)) unlinkSync(filePath);
   }
 
