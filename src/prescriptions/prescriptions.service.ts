@@ -568,7 +568,7 @@ export class PrescriptionsService {
       const FW = W - 78;    // formula section width (QR takes 78pt)
       const F1 = [55, 100, 125, FW - 280] as const;  // row-1 formula cols
       const P1 = [40, 315, 120, 90] as const;         // patient row 1
-      const P2 = [65, 100, 55, 45, 70, 230] as const; // patient row 2
+      const P2 = [65, 100, 45, 70, 285] as const; // patient row 2
       // Medication header cols: NUM | MED NAME | CONCENTRACIÓN | FORMA FARMACÉUTICA
       const MA = [22, 198, 168, W - 22 - 198 - 168] as const;
       // Detail cols (full W, no num offset): DOSIS|VIA|FREC|TIEMPO|CANTIDAD|LETRAS
@@ -684,7 +684,7 @@ export class PrescriptionsService {
       // Header row 2
       x = L;
       (
-        ['AFILIACIÓN', 'CENTRO DE COSTOS', 'FUERZA', 'ARL', 'EPS', 'LUGAR PRESCRIPCIÓN'] as const
+        ['AFILIACIÓN', 'CENTRO DE COSTOS', 'ARL', 'EPS', 'LUGAR PRESCRIPCIÓN'] as const
       ).forEach((h, i) => {
         this.pdfCell(doc, x, y, P2[i], H_PAT_H, h, { bold: true });
         x += P2[i];
@@ -697,7 +697,6 @@ export class PrescriptionsService {
         [
           'Beneficiario',
           prescription.patient.user.email,
-          '',
           'No registra',
           'No registra',
           '',
