@@ -1,5 +1,5 @@
 [build]
-cmd = "npm run build"
+cmd = "npm run build && ls -la dist/"
 
 [start]
 cmd = "node dist/main"
