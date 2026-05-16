@@ -1,4 +1,7 @@
+[build]
+buildCommand = "npm ci"
+
 [deploy]
-startCommand = "npx prisma db push && node dist/main"
+startCommand = "npx prisma generate && npx prisma db push && npm run build && node dist/main"
 restartPolicyType = "on_failure"
 restartPolicyMaxRetries = 3
