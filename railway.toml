@@ -1,7 +1,3 @@
-[build]
-builder = "nixpacks"
-buildCommand = "npm run build"
-
 [deploy]
 startCommand = "npx prisma db push && node dist/main"
 restartPolicyType = "on_failure"
