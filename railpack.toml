@@ -1,5 +1,5 @@
 [build]
-cmd = "npm run build"
+cmd = "rm -rf dist && npm run build"
 
 [start]
 cmd = "node dist/main"

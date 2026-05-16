@@ -488,7 +488,7 @@ export class PrescriptionsService {
 
   private async assertPdfAccess(
     user: JwtUser,
-    prescription: PrescriptionWithRelations,
+    prescription: PrescriptionForPdf,
   ) {
     if (user.role === Role.admin) {
       return;
