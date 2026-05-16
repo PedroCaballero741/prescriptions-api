@@ -582,7 +582,7 @@ export class PrescriptionsService {
         .font('Helvetica-Bold')
         .fontSize(11)
         .fillColor('#000000')
-        .text('FORMULACIÓN MEDICAMENTOS (PORTAL SIS)', L, y + 5, {
+        .text('FORMULACIÓN MEDICAMENTOS', L, y + 5, {
           width: W,
           align: 'center',
           lineBreak: false,
@@ -764,23 +764,36 @@ export class PrescriptionsService {
         });
         y += H_DET_H;
 
-        // ── Detail data row (full width)
+        // ── Detail data row (full width) — use wrapping to prevent overflow
         const qtyWords = item.quantity ? this.numberToWords(item.quantity) : '';
+        const detailData = [
+          item.dosage ?? '',
+          'ORAL',
+          '',
+          '',
+          item.quantity?.toString() ?? '',
+          qtyWords,
+        ] as const;
+        // Measure max height needed across all cells
+        const detH = Math.max(
+          H_DET_D,
+          ...detailData.map((d, i) =>
+            d
+              ? Math.ceil(
+                  doc
+                    .font('Helvetica')
+                    .fontSize(8)
+                    .heightOfString(d, { width: MB[i] - 6 }),
+                ) + 6
+              : H_DET_D,
+          ),
+        );
         x = L;
-        (
-          [
-            item.dosage ?? '',
-            'ORAL',
-            '',
-            '',
-            item.quantity?.toString() ?? '',
-            qtyWords,
-          ] as const
-        ).forEach((d, i) => {
-          this.pdfCell(doc, x, y, MB[i], H_DET_D, d, { size: 8 });
+        detailData.forEach((d, i) => {
+          this.pdfCell(doc, x, y, MB[i], detH, d, { size: 8, wrap: true });
           x += MB[i];
         });
-        y += H_DET_D;
+        y += detH;
 
         // ── Posology (full width)
         const posText = item.instructions
@@ -945,18 +958,6 @@ export class PrescriptionsService {
         });
 
       y += Math.max(SIG_H + 18, LIC_H + 12) + 10;
-
-      // ── FINAL NOTE ────────────────────────────────────────────────────────
-      doc
-        .font('Helvetica-Bold')
-        .fontSize(9)
-        .fillColor('#000000')
-        .text(
-          'Nota: Este documento no es válido para trámites.',
-          L,
-          y,
-          { width: W, align: 'center', lineBreak: false },
-        );
 
       doc.end();
     });
