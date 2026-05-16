@@ -1,4 +1,4 @@
 [deploy]
-startCommand = "npm install && npm run build && npx prisma db push && node dist/main"
+startCommand = "npm install --include=dev && npm run build && npx prisma db push && node dist/main"
 restartPolicyType = "on_failure"
 restartPolicyMaxRetries = 3
